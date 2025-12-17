@@ -39,13 +39,13 @@ public function payment_fields() {
                 'Vodafone Cash' => array(
                     'label' => 'Vodafone Cash',
                     'value' => $phone,
-                    'image' => plugin_dir_url(__FILE__) . 'vodafone.png',
+                    'image' => plugin_dir_url(__FILE__) . 'assets/imgs/vodafone.png',
                     'note'  => 'Send payment to: ',
                 ),
                 'InstaPay' => array(
                     'label' => 'InstaPay',
                     'value' => $instapay,
-                    'image' => plugin_dir_url(__FILE__) . 'instapay.png',
+                    'image' => plugin_dir_url(__FILE__) . 'assets/imgs/instapay.png',
                     'note'  => 'Transfer to account: ',
                 ),
             );
@@ -239,9 +239,6 @@ add_filter('wc_order_statuses', function ($statuses) {
 /*----------------------------------------------------
 3. SHARED FORM FUNCTION (FIXED)
 ----------------------------------------------------*/
-/*----------------------------------------------------
-3. SHARED FORM FUNCTION (UPDATED WITH PREVIEW)
-----------------------------------------------------*/
 function egpay_upload_form($order, $is_guest_checkout = false) {
     if (!$order) return '<p>Order not found.</p>';
     
@@ -251,7 +248,7 @@ function egpay_upload_form($order, $is_guest_checkout = false) {
     
     ob_start();
     ?>
-    <div class="egpay-upload-container" style="border:1px solid #e5e7eb; padding:20px; border-radius:12px; background:#fff; max-width:450px; margin:20px auto;">
+    <div class="egpay-upload-container" id="egpay-container-<?php echo $order->get_id(); ?>" style="border:1px solid #e5e7eb; padding:20px; border-radius:12px; background:#fff; max-width:450px; margin:20px auto;">
         <div style="text-align:center; margin-bottom:20px;">
             <p style="margin:0; color:#6b7280; font-size:14px;">Order #<?php echo $order->get_id(); ?></p>
             <h2 style="margin:5px 0; font-size:24px;"><?php echo $order->get_formatted_order_total(); ?></h2>
@@ -273,7 +270,8 @@ function egpay_upload_form($order, $is_guest_checkout = false) {
             </div>
         <?php endif; ?>
 
-        <form method="post" enctype="multipart/form-data" action="" class="receipt-form" style="margin:0;">
+        <form id="egpay-ajax-form-<?php echo $order->get_id(); ?>" class="receipt-form" style="margin:0;">
+            <div id="egpay-msg-<?php echo $order->get_id(); ?>" style="margin-bottom: 10px; font-weight: bold; text-align: center;"></div>
             
             <label id="egpay-label-<?php echo $order->get_id(); ?>" class="file-upload" style="height:100px; margin-bottom:15px; border: 2px dashed #d1d5db; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 8px;">
                 <input type="file" name="egpay_receipt" class="egpay-file-input" required accept="image/*" style="display:none;" data-orderid="<?php echo $order->get_id(); ?>">
@@ -287,10 +285,12 @@ function egpay_upload_form($order, $is_guest_checkout = false) {
                 </button>
             </div>
 
+            <input type="hidden" name="action" value="egpay_submit_receipt_ajax">
             <input type="hidden" name="egpay_order_id" value="<?php echo $order->get_id(); ?>">
             <input type="hidden" name="egpay_order_key" value="<?php echo $order->get_order_key(); ?>">
+            <input type="hidden" name="security" value="<?php echo wp_create_nonce('egpay_upload_nonce'); ?>">
 
-            <button type="submit" name="egpay_upload_btn" class="upload-btn" style="width:100%; padding:14px; background:#4f46e5; color:#fff; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+            <button type="submit" class="upload-btn" style="width:100%; padding:14px; background:#4f46e5; color:#fff; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
                 Submit Receipt for Review
             </button>
         </form>
@@ -298,30 +298,56 @@ function egpay_upload_form($order, $is_guest_checkout = false) {
 
     <script>
     jQuery(document).ready(function($) {
+        // Handle Ajax Submission
+        $('#egpay-ajax-form-<?php echo $order->get_id(); ?>').on('submit', function(e) {
+            e.preventDefault();
+            var formData = new FormData(this);
+            var $msg = $('#egpay-msg-<?php echo $order->get_id(); ?>');
+            var $btn = $(this).find('button');
+
+            $btn.prop('disabled', true).text('Uploading...');
+            $msg.html('');
+
+            $.ajax({
+                url: '<?php echo admin_url('admin-ajax.php'); ?>',
+                type: 'POST',
+                data: formData,
+                contentType: false,
+                processData: false,
+                success: function(response) {
+                    if(response.success) {
+                        $msg.css('color', '#10b981').html('✓ ' + response.data);
+                        $('#egpay-ajax-form-<?php echo $order->get_id(); ?>').find('label, .upload-btn, #egpay-preview-wrap-<?php echo $order->get_id(); ?>').hide();
+                        // Optional: close modal if in floating popup
+                        setTimeout(function() { $('#egpay-modal-overlay').fadeOut(); }, 3000);
+                    } else {
+                        $msg.css('color', '#ef4444').html('✕ ' + response.data);
+                        $btn.prop('disabled', false).text('Submit Receipt for Review');
+                    }
+                }
+            });
+        });
+
         // Image Preview Logic
         $('.egpay-file-input').on('change', function() {
             var orderId = $(this).data('orderid');
             var file = this.files[0];
-            
             if (file) {
                 var reader = new FileReader();
                 reader.onload = function(e) {
                     $('#egpay-preview-img-' + orderId).attr('src', e.target.result);
                     $('#egpay-preview-wrap-' + orderId).show();
-                    $('#egpay-label-' + orderId).hide(); // Hide the upload box
+                    $('#egpay-label-' + orderId).hide();
                 }
                 reader.readAsDataURL(file);
             }
         });
 
-        // Remove/Reselect Logic
         $('.egpay-remove-file').on('click', function() {
             var orderId = $(this).data('orderid');
-            var $input = $('input[data-orderid="' + orderId + '"]');
-            
-            $input.val(''); // Clear file
-            $('#egpay-preview-wrap-' + orderId).hide(); // Hide preview
-            $('#egpay-label-' + orderId).show(); // Show upload box again
+            $('input[data-orderid="' + orderId + '"]').val('');
+            $('#egpay-preview-wrap-' + orderId).hide();
+            $('#egpay-label-' + orderId).show();
         });
     });
     </script>
@@ -387,6 +413,46 @@ add_shortcode('egpay_upload_receipt', function () {
     return ob_get_clean();
 });
 
+
+/*----------------------------------------------------
+6. HANDLE UPLOAD VIA AJAX
+----------------------------------------------------*/
+add_action('wp_ajax_egpay_submit_receipt_ajax', 'egpay_handle_ajax_upload');
+add_action('wp_ajax_nopriv_egpay_submit_receipt_ajax', 'egpay_handle_ajax_upload');
+
+function egpay_handle_ajax_upload() {
+    check_ajax_referer('egpay_upload_nonce', 'security');
+
+    if (empty($_FILES['egpay_receipt'])) {
+        wp_send_json_error('Please select a file.');
+    }
+
+    $order_id = intval($_POST['egpay_order_id']);
+    $order = wc_get_order($order_id);
+
+    if (!$order || $order->get_order_key() !== $_POST['egpay_order_key']) {
+        wp_send_json_error('Invalid order details.');
+    }
+
+    require_once(ABSPATH . 'wp-admin/includes/file.php');
+    // Set up upload overrides to bypass security check on 'test_form'
+    $upload = wp_handle_upload($_FILES['egpay_receipt'], ['test_form' => false]);
+
+    if (isset($upload['url'])) {
+        $order->update_meta_data('_egpay_receipt', $upload['url']);
+        $order->update_status('pending-review', 'Receipt uploaded by customer (AJAX).');
+        $order->save();
+        
+        // Clear guest session since they finished
+        if (WC()->session) {
+            WC()->session->set('egpay_guest_order', null);
+        }
+        
+        wp_send_json_success('Receipt uploaded successfully! We will review your payment shortly.');
+    } else {
+        wp_send_json_error('Upload failed: ' . ($upload['error'] ?? 'Unknown error'));
+    }
+}
 /*----------------------------------------------------
 5. AJAX HANDLER
 ----------------------------------------------------*/
@@ -644,7 +710,8 @@ add_action('wp_footer', function() {
 
     ?>
     <style>
-        #egpay-float-btn { position: fixed; bottom: 30px; left: 30px; width: 60px; height: 60px; background: red; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 99999; border: none; }
+        #egpay-float-btn { position: fixed; bottom: 30px; left: 30px; width: 60px; height: 60px; background: red; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 99999; border: none; padding: 14px }
+	#egpay-float-btn img {width: 100%; height: 100%; filter: brightness(0) invert(1)}
         #egpay-float-btn svg { width: 30px; height: 30px; fill: #fff; }
         #egpay-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100000; align-items: center; justify-content: center; }
         .egpay-modal-box { background: #fff; width: 90%; max-width: 400px; border-radius: 10px; padding: 20px; position: relative; }
@@ -652,7 +719,7 @@ add_action('wp_footer', function() {
     </style>
 
     <button id="egpay-float-btn" title="Upload Receipt">
-        <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+		<img src="<?php echo plugin_dir_url(__FILE__); ?>/assets/svgs/receipt.svg" >
     </button>
 
     <div id="egpay-modal-overlay">
