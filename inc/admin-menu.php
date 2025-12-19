@@ -3,7 +3,7 @@
 add_action('admin_menu', function() {
     add_menu_page(
         'EGPay Users',           
-        'EGPay',                 
+        'EGPay Settings',                 
         'manage_options',        
         'egpay-admin-settings',  
         'render_egpay_admin_tab',
